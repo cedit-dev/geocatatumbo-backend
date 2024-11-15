@@ -1,6 +1,7 @@
 from rest_framework import views, status, parsers, permissions
 from rest_framework.response import Response
 from django.contrib.gis.geos import GEOSGeometry
+from shapely.geometry import Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon
 from ..models import GeoData, User, Category
 import geopandas as gpd
 import tempfile
@@ -55,12 +56,23 @@ class UploadFileView(views.APIView):
                 gdf = gpd.read_file(shp_path)
             except Exception as e:
                 return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-            gdf = self.process_file(gdf)
             
+            
+            # Convertir las geometrías 3D a 2D
+            gdf['geometry'] = gdf['geometry'].apply(self.convert_to_2d)
+
+            # Procesar el archivo (ajustar CRS si es necesario)
+            gdf = self.process_file(gdf)
+
+            gdf.fillna(value="", inplace=True)  # Reemplaza NaN y NaT con valores serializables
+
             for _, row in gdf.iterrows():
                 geometry = row['geometry']
-                properties = row.drop(labels='geometry').to_dict() # Todas las columnas de atributos
+                properties = row.drop(labels='geometry').to_dict()  # Todas las columnas de atributos
+                
+
+                # Convierte cualquier valor no serializable en `properties`
+                properties = {k: (v if isinstance(v, (str, int, float, bool)) else str(v)) for k, v in properties.items()}
 
                 geo_data = GeoData(
                     user_id=user,
@@ -71,6 +83,26 @@ class UploadFileView(views.APIView):
                 )
                 geo_data.save()
         return Response({"info": f"Datos de la categoría '{category.name}' almacenados correctamente."}, status=status.HTTP_200_OK)
+    
+    def convert_to_2d(self, geom):
+    # Si la geometría tiene Z, la eliminamos
+        if geom.has_z:
+            # Si la geometría es un tipo Point, LineString, Polygon, MultiPoint, MultiLineString o MultiPolygon
+            if geom.geom_type == 'Point':
+                return Point(geom.x, geom.y)
+            elif geom.geom_type == 'LineString':
+                return LineString([(x, y) for x, y, z in geom.coords])
+            elif geom.geom_type == 'Polygon':
+                return Polygon([(x, y) for x, y, z in geom.exterior.coords])
+            elif geom.geom_type == 'MultiPoint':
+                return MultiPoint([(x, y) for x, y, z in geom.coords])
+            elif geom.geom_type == 'MultiLineString':
+                # Aquí iteramos sobre las líneas dentro de un MultiLineString
+                return MultiLineString([LineString([(x, y) for x, y, z in line.coords]) for line in geom.geoms])
+            elif geom.geom_type == 'MultiPolygon':
+                # Aquí iteramos sobre los polígonos dentro de un MultiPolygon
+                return MultiPolygon([Polygon([(x, y) for x, y, z in poly.exterior.coords]) for poly in geom.geoms])
+        return geom
 
     def process_file(self, shp_file):
         if(shp_file.crs == "EPSG:4326"):
