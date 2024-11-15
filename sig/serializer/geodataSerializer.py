@@ -4,4 +4,5 @@ from ..models import GeoData
 class GeodataSerializer(serializers.ModelSerializer):
     class Meta:
         model = GeoData
-        fields =['id', 'user_id', 'category_id', 'geometry', 'is_active', 'information']
+        fields = '__all__'
+        # fields =['id', 'user_id', 'category_id', 'geometry', 'is_active', 'information']
